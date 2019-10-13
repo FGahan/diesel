@@ -29,21 +29,46 @@ enum Backend {
 impl Backend {
     fn for_url(database_url: &str) -> Self {
         match database_url {
-            #[cfg(feature = "postgres")]
             _ if database_url.starts_with("postgres://")
                 || database_url.starts_with("postgresql://") =>
             {
-                Backend::Pg
+                #[cfg(feature = "postgres")]
+                {
+                    Backend::Pg
+                }
+                #[cfg(not(feature = "postgres"))]
+                {
+                    panic!(
+                        "Database url `{}` requires the `postgres` feature but it's not enabled.",
+                        database_url
+                    );
+                }
             }
-            #[cfg(feature = "mysql")]
             _ if database_url.starts_with("mysql://") =>
             {
-                Backend::Mysql
+                #[cfg(feature = "mysql")]
+                {
+                    Backend::Mysql
+                }
+                #[cfg(not(feature = "mysql"))]
+                {
+                    panic!(
+                        "Database url `{}` requires the `mysql` feature but it's not enabled.",
+                        database_url
+                    );
+                }
             }
             #[cfg(feature = "sqlite")]
             _ => Backend::Sqlite,
             #[cfg(not(feature = "sqlite"))]
             _ => {
+                if database_url.starts_with("sqlite://") {
+                    panic!(
+                        "Database url `{}` requires the `sqlite` feature but it's not enabled.",
+                        database_url
+                    );
+                }
+
                 let mut available_schemes: Vec<&str> = Vec::new();
 
                 // One of these will always be true, or you are compiling
@@ -57,7 +82,7 @@ impl Backend {
                 }
 
                 panic!(
-                    "`{}` is not a valid database URL. It should start with {}",
+                    "`{}` is not a valid database URL. It should start with {}, or maybe you meant to use the `sqlite` feature which is not enabled.",
                     database_url,
                     available_schemes.join(" or ")
                 );
@@ -92,7 +117,8 @@ impl InferConnection {
             }
             #[cfg(feature = "mysql")]
             Backend::Mysql => MysqlConnection::establish(database_url).map(InferConnection::Mysql),
-        }.map_err(Into::into)
+        }
+        .map_err(Into::into)
     }
 }
 
@@ -108,7 +134,7 @@ macro_rules! call_with_conn {
         $database_url:expr,
         $($func:ident)::+ ($($args:expr),*)
     ) => {
-        match ::database::InferConnection::establish(&$database_url).unwrap() {
+        match ::database::InferConnection::establish(&$database_url).unwrap_or_else(handle_error) {
             #[cfg(feature="postgres")]
             ::database::InferConnection::Pg(ref conn) => $($func)::+ (conn, $($args),*),
             #[cfg(feature="sqlite")]
@@ -120,7 +146,7 @@ macro_rules! call_with_conn {
 }
 
 pub fn reset_database(args: &ArgMatches, migrations_dir: &Path) -> DatabaseResult<()> {
-    try!(drop_database(&database_url(args)));
+    drop_database(&database_url(args))?;
     setup_database(args, migrations_dir)
 }
 
@@ -142,24 +168,31 @@ pub fn drop_database_command(args: &ArgMatches) -> DatabaseResult<()> {
 fn create_database_if_needed(database_url: &str) -> DatabaseResult<()> {
     match Backend::for_url(database_url) {
         #[cfg(feature = "postgres")]
-        Backend::Pg => if PgConnection::establish(database_url).is_err() {
-            let (database, postgres_url) = change_database_of_url(database_url, "postgres");
-            println!("Creating database: {}", database);
-            let conn = try!(PgConnection::establish(&postgres_url));
-            query_helper::create_database(&database).execute(&conn)?;
-        },
+        Backend::Pg => {
+            if PgConnection::establish(database_url).is_err() {
+                let (database, postgres_url) = change_database_of_url(database_url, "postgres");
+                println!("Creating database: {}", database);
+                let conn = PgConnection::establish(&postgres_url)?;
+                query_helper::create_database(&database).execute(&conn)?;
+            }
+        }
         #[cfg(feature = "sqlite")]
-        Backend::Sqlite => if !::std::path::Path::new(database_url).exists() {
-            println!("Creating database: {}", database_url);
-            try!(SqliteConnection::establish(database_url));
-        },
+        Backend::Sqlite => {
+            if !::std::path::Path::new(database_url).exists() {
+                println!("Creating database: {}", database_url);
+                SqliteConnection::establish(database_url)?;
+            }
+        }
         #[cfg(feature = "mysql")]
-        Backend::Mysql => if MysqlConnection::establish(database_url).is_err() {
-            let (database, mysql_url) = change_database_of_url(database_url, "information_schema");
-            println!("Creating database: {}", database);
-            let conn = try!(MysqlConnection::establish(&mysql_url));
-            query_helper::create_database(&database).execute(&conn)?;
-        },
+        Backend::Mysql => {
+            if MysqlConnection::establish(database_url).is_err() {
+                let (database, mysql_url) =
+                    change_database_of_url(database_url, "information_schema");
+                println!("Creating database: {}", database);
+                let conn = MysqlConnection::establish(&mysql_url)?;
+                query_helper::create_database(&database).execute(&conn)?;
+            }
+        }
     }
 
     Ok(())
@@ -174,8 +207,7 @@ fn create_default_migration_if_needed(
         return Ok(());
     }
 
-    #[allow(unreachable_patterns)]
-    #[cfg_attr(feature = "cargo-clippy", allow(single_match))]
+    #[allow(unreachable_patterns, clippy::single_match)]
     match Backend::for_url(database_url) {
         #[cfg(feature = "postgres")]
         Backend::Pg => {
@@ -200,11 +232,12 @@ fn create_schema_table_and_run_migrations_if_needed(
     migrations_dir: &Path,
 ) -> DatabaseResult<()> {
     if !schema_table_exists(database_url).unwrap_or_else(handle_error) {
-        try!(call_with_conn!(database_url, migrations::setup_database()));
+        call_with_conn!(database_url, migrations::setup_database())?;
         call_with_conn!(
             database_url,
             migrations::run_pending_migrations_in_directory(migrations_dir, &mut stdout())
-        ).unwrap_or_else(handle_error);
+        )
+        .unwrap_or_else(handle_error);
     };
     Ok(())
 }
@@ -216,8 +249,8 @@ fn drop_database(database_url: &str) -> DatabaseResult<()> {
         #[cfg(feature = "postgres")]
         Backend::Pg => {
             let (database, postgres_url) = change_database_of_url(database_url, "postgres");
-            let conn = try!(PgConnection::establish(&postgres_url));
-            if try!(pg_database_exists(&conn, &database)) {
+            let conn = PgConnection::establish(&postgres_url)?;
+            if pg_database_exists(&conn, &database)? {
                 println!("Dropping database: {}", database);
                 query_helper::drop_database(&database)
                     .if_exists()
@@ -226,19 +259,16 @@ fn drop_database(database_url: &str) -> DatabaseResult<()> {
         }
         #[cfg(feature = "sqlite")]
         Backend::Sqlite => {
-            use std::fs;
-            use std::path::Path;
-
             if Path::new(database_url).exists() {
                 println!("Dropping database: {}", database_url);
-                try!(fs::remove_file(&database_url));
+                std::fs::remove_file(&database_url)?;
             }
         }
         #[cfg(feature = "mysql")]
         Backend::Mysql => {
             let (database, mysql_url) = change_database_of_url(database_url, "information_schema");
-            let conn = try!(MysqlConnection::establish(&mysql_url));
-            if try!(mysql_database_exists(&conn, &database)) {
+            let conn = MysqlConnection::establish(&mysql_url)?;
+            if mysql_database_exists(&conn, &database)? {
                 println!("Dropping database: {}", database);
                 query_helper::drop_database(&database)
                     .if_exists()
@@ -299,7 +329,8 @@ pub fn schema_table_exists(database_url: &str) -> DatabaseResult<bool> {
              (SELECT 1 \
              FROM information_schema.tables \
              WHERE table_name = '__diesel_schema_migrations')",
-        )).get_result(&conn),
+        ))
+        .get_result(&conn),
         #[cfg(feature = "sqlite")]
         InferConnection::Sqlite(conn) => select(sql::<Bool>(
             "EXISTS \
@@ -307,7 +338,8 @@ pub fn schema_table_exists(database_url: &str) -> DatabaseResult<bool> {
              FROM sqlite_master \
              WHERE type = 'table' \
              AND name = '__diesel_schema_migrations')",
-        )).get_result(&conn),
+        ))
+        .get_result(&conn),
         #[cfg(feature = "mysql")]
         InferConnection::Mysql(conn) => select(sql::<Bool>(
             "EXISTS \
@@ -315,8 +347,10 @@ pub fn schema_table_exists(database_url: &str) -> DatabaseResult<bool> {
                      FROM information_schema.tables \
                      WHERE table_name = '__diesel_schema_migrations'
                      AND table_schema = DATABASE())",
-        )).get_result(&conn),
-    }.map_err(Into::into)
+        ))
+        .get_result(&conn),
+    }
+    .map_err(Into::into)
 }
 
 pub fn database_url(matches: &ArgMatches) -> String {
@@ -336,7 +370,7 @@ fn change_database_of_url(database_url: &str, default_database: &str) -> (String
     (database, new_url.into_string())
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+#[allow(clippy::needless_pass_by_value)]
 fn handle_error<E: Error, T>(error: E) -> T {
     println!("{}", error);
     ::std::process::exit(1);

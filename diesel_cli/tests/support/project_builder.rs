@@ -85,7 +85,8 @@ impl Project {
             .expect("Error reading directory")
             .map(|e| Migration {
                 path: e.expect("error reading entry").path().into(),
-            }).collect()
+            })
+            .collect()
     }
 
     pub fn delete_single_file<P: AsRef<Path>>(&self, path: P) {
@@ -160,7 +161,6 @@ impl Project {
     }
 
     pub fn create_migration_in_directory(&self, directory: &str, name: &str, up: &str, down: &str) {
-        use std::io::Write;
         let migration_path = self.directory.path().join(directory).join(name);
         fs::create_dir(&migration_path)
             .expect("Migrations folder must exist to create a migration");

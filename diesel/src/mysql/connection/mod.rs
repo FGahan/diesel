@@ -7,9 +7,9 @@ use self::raw::RawConnection;
 use self::stmt::Statement;
 use self::url::ConnectionOptions;
 use super::backend::Mysql;
-use super::bind_collector::MysqlBindCollector;
 use connection::*;
 use deserialize::{Queryable, QueryableByName};
+use query_builder::bind_collector::RawBytesBindCollector;
 use query_builder::*;
 use result::*;
 use sql_types::HasSqlType;
@@ -40,14 +40,15 @@ impl Connection for MysqlConnection {
         use result::ConnectionError::CouldntSetupConfiguration;
 
         let raw_connection = RawConnection::new();
-        let connection_options = try!(ConnectionOptions::parse(database_url));
-        try!(raw_connection.connect(&connection_options));
+        let connection_options = ConnectionOptions::parse(database_url)?;
+        raw_connection.connect(&connection_options)?;
         let conn = MysqlConnection {
             raw_connection: raw_connection,
             transaction_manager: AnsiTransactionManager::new(),
             statement_cache: StatementCache::new(),
         };
-        try!(conn.set_config_options().map_err(CouldntSetupConfiguration));
+        conn.set_config_options()
+            .map_err(CouldntSetupConfiguration)?;
         Ok(conn)
     }
 
@@ -69,7 +70,7 @@ impl Connection for MysqlConnection {
         use deserialize::FromSqlRow;
         use result::Error::DeserializationError;
 
-        let mut stmt = try!(self.prepare_query(&source.as_query()));
+        let mut stmt = self.prepare_query(&source.as_query())?;
         let mut metadata = Vec::new();
         Mysql::mysql_row_metadata(&mut metadata, &());
         let results = unsafe { stmt.results(metadata)? };
@@ -98,9 +99,9 @@ impl Connection for MysqlConnection {
     where
         T: QueryFragment<Self::Backend> + QueryId,
     {
-        let stmt = try!(self.prepare_query(source));
+        let stmt = self.prepare_query(source)?;
         unsafe {
-            try!(stmt.execute());
+            stmt.execute()?;
         }
         Ok(stmt.affected_rows())
     }
@@ -119,9 +120,13 @@ impl MysqlConnection {
         let mut stmt = self
             .statement_cache
             .cached_statement(source, &[], |sql| self.raw_connection.prepare(sql))?;
-        let mut bind_collector = MysqlBindCollector::new();
-        try!(source.collect_binds(&mut bind_collector, &()));
-        try!(stmt.bind(bind_collector.binds));
+        let mut bind_collector = RawBytesBindCollector::new();
+        source.collect_binds(&mut bind_collector, &())?;
+        let binds = bind_collector
+            .metadata
+            .into_iter()
+            .zip(bind_collector.binds);
+        stmt.bind(binds)?;
         Ok(stmt)
     }
 

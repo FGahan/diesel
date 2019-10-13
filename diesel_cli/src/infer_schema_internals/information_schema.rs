@@ -59,7 +59,7 @@ impl UsesInformationSchema for Mysql {
     }
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(module_inception))]
+#[allow(clippy::module_inception)]
 mod information_schema {
     table! {
         information_schema.tables (table_schema, table_name) {
@@ -106,8 +106,8 @@ mod information_schema {
         information_schema.referential_constraints (constraint_schema, constraint_name) {
             constraint_schema -> VarChar,
             constraint_name -> VarChar,
-            unique_constraint_schema -> VarChar,
-            unique_constraint_name -> VarChar,
+            unique_constraint_schema -> Nullable<VarChar>,
+            unique_constraint_name -> Nullable<VarChar>,
         }
     }
 
@@ -167,7 +167,7 @@ where
 pub fn load_table_names<Conn>(
     connection: &Conn,
     schema_name: Option<&str>,
-) -> Result<Vec<TableName>, Box<Error>>
+) -> Result<Vec<TableName>, Box<dyn Error>>
 where
     Conn: Connection,
     Conn::Backend: UsesInformationSchema,
@@ -194,7 +194,7 @@ where
     Ok(table_names)
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(similar_names))]
+#[allow(clippy::similar_names)]
 #[cfg(feature = "postgres")]
 pub fn load_foreign_key_constraints<Conn>(
     connection: &Conn,
@@ -222,12 +222,14 @@ where
             rc::table.on(tc::constraint_schema
                 .eq(rc::constraint_schema)
                 .and(tc::constraint_name.eq(rc::constraint_name))),
-        ).select((
+        )
+        .select((
             rc::constraint_schema,
             rc::constraint_name,
             rc::unique_constraint_schema,
             rc::unique_constraint_name,
-        )).load::<(String, String, String, String)>(connection)?;
+        ))
+        .load::<(String, String, Option<String>, Option<String>)>(connection)?;
 
     constraint_names
         .into_iter()
@@ -237,10 +239,10 @@ where
                     .filter(kcu::constraint_schema.eq(&foreign_key_schema))
                     .filter(kcu::constraint_name.eq(&foreign_key_name))
                     .select(((kcu::table_name, kcu::table_schema), kcu::column_name))
-                    .first::<(TableName, _)>(connection)?;
+                    .first::<(TableName, String)>(connection)?;
                 let (mut primary_key_table, primary_key_column) = kcu::table
-                    .filter(kcu::constraint_schema.eq(primary_key_schema))
-                    .filter(kcu::constraint_name.eq(primary_key_name))
+                    .filter(kcu::constraint_schema.nullable().eq(primary_key_schema))
+                    .filter(kcu::constraint_name.nullable().eq(primary_key_name))
                     .select(((kcu::table_name, kcu::table_schema), kcu::column_name))
                     .first::<(TableName, _)>(connection)?;
 
@@ -250,11 +252,17 @@ where
                 Ok(ForeignKeyConstraint {
                     child_table: foreign_key_table,
                     parent_table: primary_key_table,
-                    foreign_key: foreign_key_column,
+                    foreign_key: foreign_key_column.clone(),
+                    foreign_key_rust_name: foreign_key_column,
                     primary_key: primary_key_column,
                 })
             },
-        ).collect()
+        )
+        .filter(|e| match e {
+            Err(NotFound) => false,
+            _ => true,
+        })
+        .collect()
 }
 
 #[cfg(all(test, feature = "postgres"))]
@@ -459,12 +467,14 @@ mod tests {
             child_table: table_2.clone(),
             parent_table: table_1.clone(),
             foreign_key: "fk_one".into(),
+            foreign_key_rust_name: "fk_one".into(),
             primary_key: "id".into(),
         };
         let fk_two = ForeignKeyConstraint {
             child_table: table_3.clone(),
             parent_table: table_2.clone(),
             foreign_key: "fk_two".into(),
+            foreign_key_rust_name: "fk_two".into(),
             primary_key: "id".into(),
         };
         assert_eq!(

@@ -42,10 +42,7 @@ pub use self::insert_statement::{
 pub use self::query_id::QueryId;
 #[doc(hidden)]
 pub use self::select_statement::{BoxedSelectStatement, SelectStatement};
-pub use self::sql_query::SqlQuery;
-#[cfg(feature = "with-deprecated")]
-#[allow(deprecated)]
-pub use self::update_statement::IncompleteUpdateStatement;
+pub use self::sql_query::{BoxedSqlQuery, SqlQuery};
 #[doc(inline)]
 pub use self::update_statement::{
     AsChangeset, BoxedUpdateStatement, IntoUpdateTarget, UpdateStatement, UpdateTarget,
@@ -61,7 +58,7 @@ use result::QueryResult;
 #[doc(hidden)]
 pub type Binds = Vec<Option<Vec<u8>>>;
 /// A specialized Result type used with the query builder.
-pub type BuildQueryResult = Result<(), Box<Error + Send + Sync>>;
+pub type BuildQueryResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 /// Constructs a SQL query from a Diesel AST.
 ///

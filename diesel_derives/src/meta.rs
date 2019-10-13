@@ -10,14 +10,24 @@ pub struct MetaItem {
     meta: syn::Meta,
 }
 
+pub(crate) fn path_to_string(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|s| s.ident.to_string())
+        .collect::<Vec<String>>()
+        .join("::")
+}
+
 impl MetaItem {
     pub fn all_with_name(attrs: &[syn::Attribute], name: &str) -> Vec<Self> {
         attrs
             .iter()
             .filter_map(|attr| {
-                attr.interpret_meta()
+                attr.parse_meta()
+                    .ok()
                     .map(|m| FixSpan(attr.pound_token.spans[0]).fold_meta(m))
-            }).filter(|m| m.name() == name)
+            })
+            .filter(|m| m.path().is_ident(name))
             .map(|meta| Self { meta })
             .collect()
     }
@@ -29,7 +39,7 @@ impl MetaItem {
     pub fn empty(name: &str) -> Self {
         Self {
             meta: syn::Meta::List(syn::MetaList {
-                ident: Ident::new(name, Span::call_site()),
+                path: syn::Path::from(Ident::new(name, Span::call_site())),
                 paren_token: Default::default(),
                 nested: Default::default(),
             }),
@@ -37,7 +47,8 @@ impl MetaItem {
     }
 
     pub fn nested_item(&self, name: &str) -> Result<Option<Self>, Diagnostic> {
-        self.nested().map(|mut i| i.find(|n| n.name() == name))
+        self.nested()
+            .map(|mut i| i.find(|n| n.name().is_ident(name)))
     }
 
     pub fn required_nested_item(&self, name: &str) -> Result<Self, Diagnostic> {
@@ -48,15 +59,16 @@ impl MetaItem {
     }
 
     pub fn expect_bool_value(&self) -> bool {
-        match self.str_value().as_ref().map(|s| s.as_str()) {
+        match self.str_value().as_ref().map(String::as_str) {
             Ok("true") => true,
             Ok("false") => false,
             _ => {
                 self.span()
                     .error(format!(
                         "`{0}` must be in the form `{0} = \"true\"`",
-                        self.name()
-                    )).emit();
+                        path_to_string(&self.name())
+                    ))
+                    .emit();
                 false
             }
         }
@@ -65,21 +77,22 @@ impl MetaItem {
     pub fn expect_ident_value(&self) -> syn::Ident {
         self.ident_value().unwrap_or_else(|e| {
             e.emit();
-            self.name()
+            self.name().segments.first().unwrap().ident.clone()
         })
     }
 
     pub fn ident_value(&self) -> Result<syn::Ident, Diagnostic> {
         let maybe_attr = self.nested().ok().and_then(|mut n| n.nth(0));
-        let maybe_word = maybe_attr.as_ref().and_then(|m| m.word().ok());
-        match maybe_word {
+        let maybe_path = maybe_attr.as_ref().and_then(|m| m.path().ok());
+        match maybe_path {
             Some(x) => {
                 self.span()
                     .warning(format!(
                         "The form `{0}(value)` is deprecated. Use `{0} = \"value\"` instead",
-                        self.name(),
-                    )).emit();
-                Ok(x)
+                        path_to_string(&self.name()),
+                    ))
+                    .emit();
+                Ok(x.segments.first().unwrap().ident.clone())
             }
             _ => Ok(syn::Ident::new(
                 &self.str_value()?,
@@ -88,23 +101,23 @@ impl MetaItem {
         }
     }
 
-    pub fn expect_word(&self) -> syn::Ident {
-        self.word().unwrap_or_else(|e| {
+    pub fn expect_path(&self) -> syn::Path {
+        self.path().unwrap_or_else(|e| {
             e.emit();
             self.name()
         })
     }
 
-    pub fn word(&self) -> Result<syn::Ident, Diagnostic> {
+    pub fn path(&self) -> Result<syn::Path, Diagnostic> {
         use syn::Meta::*;
 
         match self.meta {
-            Word(ref x) => Ok(x.clone()),
+            Path(ref x) => Ok(x.clone()),
             _ => {
                 let meta = &self.meta;
                 Err(self.span().error(format!(
                     "Expected `{}` found `{}`",
-                    self.name(),
+                    path_to_string(&self.name()),
                     quote!(#meta)
                 )))
             }
@@ -116,24 +129,26 @@ impl MetaItem {
 
         match self.meta {
             List(ref list) => Ok(Nested(list.nested.iter())),
-            _ => Err(self
-                .span()
-                .error(format!("`{0}` must be in the form `{0}(...)`", self.name()))),
+            _ => Err(self.span().error(format!(
+                "`{0}` must be in the form `{0}(...)`",
+                path_to_string(&self.name())
+            ))),
         }
     }
 
-    pub fn name(&self) -> syn::Ident {
-        self.meta.name()
+    pub fn name(&self) -> syn::Path {
+        self.meta.path().clone()
     }
 
     pub fn has_flag(&self, flag: &str) -> bool {
         self.nested()
             .map(|mut n| {
-                n.any(|m| match m.word() {
-                    Ok(word) => word == flag,
+                n.any(|m| match m.path() {
+                    Ok(word) => word.is_ident(flag),
                     Err(_) => false,
                 })
-            }).unwrap_or_else(|e| {
+            })
+            .unwrap_or_else(|e| {
                 e.emit();
                 false
             })
@@ -148,11 +163,11 @@ impl MetaItem {
     pub fn expect_str_value(&self) -> String {
         self.str_value().unwrap_or_else(|e| {
             e.emit();
-            self.name().to_string()
+            path_to_string(&self.name())
         })
     }
 
-    fn str_value(&self) -> Result<String, Diagnostic> {
+    pub fn str_value(&self) -> Result<String, Diagnostic> {
         self.lit_str_value().map(syn::LitStr::value)
     }
 
@@ -163,7 +178,7 @@ impl MetaItem {
             Str(ref s) => Ok(s),
             _ => Err(self.span().error(format!(
                 "`{0}` must be in the form `{0} = \"value\"`",
-                self.name()
+                path_to_string(&self.name())
             ))),
         }
     }
@@ -179,7 +194,7 @@ impl MetaItem {
 
         match *self.lit_value()? {
             Str(ref s) => s.value().parse().map_err(|_| error),
-            Int(ref i) => Ok(i.value()),
+            Int(ref i) => i.base10_parse().map_err(|_| error),
             _ => Err(error),
         }
     }
@@ -191,7 +206,7 @@ impl MetaItem {
             NameValue(ref name_value) => Ok(&name_value.lit),
             _ => Err(self.span().error(format!(
                 "`{0}` must be in the form `{0} = \"value\"`",
-                self.name()
+                path_to_string(&self.name())
             ))),
         }
     }
@@ -201,11 +216,15 @@ impl MetaItem {
             Ok(x) => x,
             Err(_) => return,
         };
-        let unrecognized_options = nested.filter(|n| !options.iter().any(|&o| n.name() == o));
+        let unrecognized_options =
+            nested.filter(|n| !options.iter().any(|&o| n.name().is_ident(o)));
         for ignored in unrecognized_options {
             ignored
                 .span()
-                .warning(format!("Option {} has no effect", ignored.name()))
+                .warning(format!(
+                    "Option {} has no effect",
+                    path_to_string(&ignored.name())
+                ))
                 .emit();
         }
     }
@@ -214,7 +233,7 @@ impl MetaItem {
         use syn::Meta::*;
 
         match self.meta {
-            Word(ref ident) => ident.span(),
+            Path(ref path) => path.span(),
             List(ref meta) => meta.nested.span(),
             NameValue(ref meta) => meta.lit.span(),
         }
@@ -225,7 +244,6 @@ impl MetaItem {
     }
 }
 
-#[cfg_attr(rustfmt, rustfmt_skip)] // https://github.com/rust-lang-nursery/rustfmt/issues/2392
 pub struct Nested<'a>(syn::punctuated::Iter<'a, syn::NestedMeta>);
 
 impl<'a> Iterator for Nested<'a> {

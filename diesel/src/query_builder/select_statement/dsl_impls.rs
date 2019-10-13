@@ -347,7 +347,7 @@ where
     S: QueryFragment<DB> + SelectableExpression<F> + 'a,
     D: QueryFragment<DB> + 'a,
     W: Into<BoxedWhereClause<'a, DB>>,
-    O: Into<Option<Box<QueryFragment<DB> + 'a>>>,
+    O: Into<Option<Box<dyn QueryFragment<DB> + 'a>>>,
     L: QueryFragment<DB> + 'a,
     Of: QueryFragment<DB> + 'a,
     G: QueryFragment<DB> + 'a,
@@ -377,7 +377,7 @@ where
     F::DefaultSelection: QueryFragment<DB> + 'a,
     D: QueryFragment<DB> + 'a,
     W: Into<BoxedWhereClause<'a, DB>>,
-    O: Into<Option<Box<QueryFragment<DB> + 'a>>>,
+    O: Into<Option<Box<dyn QueryFragment<DB> + 'a>>>,
     L: QueryFragment<DB> + 'a,
     Of: QueryFragment<DB> + 'a,
     G: QueryFragment<DB> + 'a,
@@ -442,7 +442,8 @@ impl<F, S, D, W, O, L, Of, G, LC> QueryDsl for SelectStatement<F, S, D, W, O, L,
 
 impl<F, S, D, W, O, L, Of, G, LC, Conn> RunQueryDsl<Conn>
     for SelectStatement<F, S, D, W, O, L, Of, G, LC>
-{}
+{
+}
 
 impl<F, S, D, W, O, L, Of, G, LC, Tab> Insertable<Tab>
     for SelectStatement<F, S, D, W, O, L, Of, G, LC>

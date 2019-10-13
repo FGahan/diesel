@@ -108,7 +108,7 @@ fn examine_sql_from_increment_visit_counts() {
     use posts::dsl::*;
 
     assert_eq!(
-        "UPDATE \"posts\" SET \"visit_count\" = \"posts\".\"visit_count\" + $1 \
+        "UPDATE \"posts\" SET \"visit_count\" = (\"posts\".\"visit_count\" + $1) \
          -- binds: [1]",
         debug_query::<Pg, _>(&diesel::update(posts).set(visit_count.eq(visit_count + 1)))
             .to_string()
@@ -122,7 +122,8 @@ pub fn hide_everything(conn: &PgConnection) -> QueryResult<usize> {
         .set((
             title.eq("[REDACTED]"),
             body.eq("This post has been classified"),
-        )).execute(conn)
+        ))
+        .execute(conn)
 }
 
 #[test]
@@ -189,7 +190,8 @@ pub fn update_with_option(conn: &PgConnection) -> QueryResult<usize> {
         .set(&PostForm {
             title: None,
             body: Some("My new post"),
-        }).execute(conn)
+        })
+        .execute(conn)
 }
 
 #[test]

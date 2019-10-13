@@ -42,13 +42,15 @@ fn errors_during_deserialization_do_not_panic() {
         id SERIAL PRIMARY KEY,
         ts TIMESTAMP NOT NULL
     )",
-        ).unwrap();
+        )
+        .unwrap();
     let valid_pg_date_too_large_for_chrono = "'294276/01/01'";
     connection
         .execute(&format!(
             "INSERT INTO has_timestamps (ts) VALUES ({})",
             valid_pg_date_too_large_for_chrono
-        )).unwrap();
+        ))
+        .unwrap();
     let values = has_timestamps.select(ts).load::<NaiveDateTime>(&connection);
 
     match values {
@@ -71,14 +73,16 @@ fn errors_during_deserialization_do_not_panic() {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts VARCHAR NOT NULL
     )",
-        ).unwrap();
+        )
+        .unwrap();
 
     let valid_sqlite_date_too_large_for_chrono = "'294276-01-01 00:00:00'";
     connection
         .execute(&format!(
             "INSERT INTO has_timestamps (ts) VALUES ({})",
             valid_sqlite_date_too_large_for_chrono
-        )).unwrap();
+        ))
+        .unwrap();
     let values = has_timestamps.select(ts).load::<NaiveDateTime>(&connection);
 
     match values {
@@ -109,7 +113,8 @@ fn test_chrono_types_sqlite() {
         date DATE,
         time TIME
     )",
-        ).unwrap();
+        )
+        .unwrap();
 
     let dt = NaiveDate::from_ymd(2016, 7, 8).and_hms(9, 10, 11);
     let new_time_types = NewTimeTypes {
@@ -1123,6 +1128,8 @@ fn text_array_can_be_assigned_to_varchar_array_column() {
 #[test]
 #[cfg(feature = "postgres")]
 fn third_party_crates_can_add_new_types() {
+    use diesel::pg::PgValue;
+
     #[derive(Debug, Clone, Copy, QueryId, SqlType)]
     struct MyInt;
 
@@ -1133,7 +1140,7 @@ fn third_party_crates_can_add_new_types() {
     }
 
     impl FromSql<MyInt, Pg> for i32 {
-        fn from_sql(bytes: Option<&[u8]>) -> deserialize::Result<Self> {
+        fn from_sql(bytes: Option<PgValue<'_>>) -> deserialize::Result<Self> {
             FromSql::<Integer, Pg>::from_sql(bytes)
         }
     }
@@ -1214,11 +1221,9 @@ fn test_range_from_sql() {
     );
 
     let query = "SELECT '(1,1]'::int4range";
-    assert!(
-        sql::<Range<Int4>>(query)
-            .load::<(Bound<i32>, Bound<i32>)>(&connection)
-            .is_err()
-    );
+    assert!(sql::<Range<Int4>>(query)
+        .load::<(Bound<i32>, Bound<i32>)>(&connection)
+        .is_err());
 }
 
 #[cfg(feature = "postgres")]
@@ -1247,7 +1252,8 @@ fn test_inserting_ranges() {
                         id SERIAL PRIMARY KEY,
                         nul_range INT4RANGE,
                         range INT4RANGE NOT NULL)",
-        ).unwrap();
+        )
+        .unwrap();
     table!(
         has_ranges(id) {
             id -> Int4,

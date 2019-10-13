@@ -93,7 +93,7 @@ fn examine_sql_from_insert_multiple_columns() {
     assert_eq!(sql, debug_query::<Mysql, _>(&query).to_string());
 }
 
-pub fn insert_insertable_struct(conn: &MysqlConnection) -> Result<(), Box<Error>> {
+pub fn insert_insertable_struct(conn: &MysqlConnection) -> Result<(), Box<dyn Error>> {
     use schema::users::dsl::*;
 
     let json = r#"{ "name": "Sean", "hair_color": "Black" }"#;
@@ -116,7 +116,7 @@ fn examine_sql_from_insertable_struct() {
     assert_eq!(sql, debug_query::<Mysql, _>(&query).to_string());
 }
 
-pub fn insert_insertable_struct_option(conn: &MysqlConnection) -> Result<(), Box<Error>> {
+pub fn insert_insertable_struct_option(conn: &MysqlConnection) -> Result<(), Box<dyn Error>> {
     use schema::users::dsl::*;
 
     let json = r#"{ "name": "Ruby", "hair_color": null }"#;
@@ -184,7 +184,8 @@ pub fn insert_tuple_batch(conn: &MysqlConnection) -> QueryResult<usize> {
         .values(&vec![
             (name.eq("Sean"), hair_color.eq("Black")),
             (name.eq("Tess"), hair_color.eq("Brown")),
-        ]).execute(conn)
+        ])
+        .execute(conn)
 }
 
 #[test]
@@ -209,7 +210,8 @@ pub fn insert_tuple_batch_with_default(conn: &MysqlConnection) -> QueryResult<us
         .values(&vec![
             (name.eq("Sean"), Some(hair_color.eq("Black"))),
             (name.eq("Ruby"), None),
-        ]).execute(conn)
+        ])
+        .execute(conn)
 }
 
 #[test]
@@ -227,7 +229,7 @@ fn examine_sql_from_insert_tuple_batch_with_default() {
     assert_eq!(sql, debug_query::<Mysql, _>(&query).to_string());
 }
 
-pub fn insert_insertable_struct_batch(conn: &MysqlConnection) -> Result<(), Box<Error>> {
+pub fn insert_insertable_struct_batch(conn: &MysqlConnection) -> Result<(), Box<dyn Error>> {
     use schema::users::dsl::*;
 
     let json = r#"[
@@ -273,7 +275,8 @@ fn insert_get_results_batch() {
                 .values(&vec![
                     (id.eq(1), name.eq("Sean")),
                     (id.eq(2), name.eq("Tess")),
-                ]).execute(&conn)?;
+                ])
+                .execute(&conn)?;
 
             Ok(users
                 .order(id.desc())

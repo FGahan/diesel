@@ -1,27 +1,18 @@
 // Built-in Lints
 #![deny(warnings, missing_copy_implementations)]
 // Clippy lints
-#![cfg_attr(
-    feature = "cargo-clippy",
-    allow(option_map_unwrap_or_else, option_map_unwrap_or)
+#![allow(clippy::option_map_unwrap_or_else, clippy::option_map_unwrap_or)]
+#![warn(
+    clippy::wrong_pub_self_convention,
+    clippy::mut_mut,
+    clippy::non_ascii_literal,
+    clippy::similar_names,
+    clippy::unicode_not_nfc,
+    clippy::if_not_else,
+    clippy::items_after_statements,
+    clippy::used_underscore_binding
 )]
-#![cfg_attr(
-    feature = "cargo-clippy",
-    warn(
-        wrong_pub_self_convention,
-        mut_mut,
-        non_ascii_literal,
-        similar_names,
-        unicode_not_nfc,
-        if_not_else,
-        items_after_statements,
-        used_underscore_binding
-    )
-)]
-#![cfg_attr(
-    all(test, feature = "cargo-clippy"),
-    allow(result_unwrap_used)
-)]
+#![cfg_attr(test, allow(clippy::result_unwrap_used))]
 
 extern crate chrono;
 #[macro_use]
@@ -29,6 +20,7 @@ extern crate clap;
 #[macro_use]
 extern crate diesel;
 extern crate dotenv;
+extern crate heck;
 extern crate migrations_internals;
 #[macro_use]
 extern crate serde;
@@ -56,6 +48,7 @@ use clap::{ArgMatches, Shell};
 use migrations_internals::{self as migrations, MigrationConnection};
 use std::any::Any;
 use std::error::Error;
+use std::fmt::Display;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::{env, fs};
@@ -82,8 +75,8 @@ fn main() {
 }
 
 // https://github.com/rust-lang-nursery/rust-clippy/issues/2927#issuecomment-405705595
-#[cfg_attr(feature = "cargo-clippy", allow(similar_names))]
-fn run_migration_command(matches: &ArgMatches) -> Result<(), Box<Error>> {
+#[allow(clippy::similar_names)]
+fn run_migration_command(matches: &ArgMatches) -> Result<(), Box<dyn Error>> {
     match matches.subcommand() {
         ("run", Some(_)) => {
             let database_url = database::database_url(matches);
@@ -179,11 +172,10 @@ fn generate_sql_migration(path: &PathBuf) {
         .unwrap();
 }
 
-use std::fmt::Display;
-fn migration_version<'a>(matches: &'a ArgMatches) -> Box<Display + 'a> {
+fn migration_version<'a>(matches: &'a ArgMatches) -> Box<dyn Display + 'a> {
     matches
         .value_of("MIGRATION_VERSION")
-        .map(|s| Box::new(s) as Box<Display>)
+        .map(|s| Box::new(s) as Box<dyn Display>)
         .unwrap_or_else(|| Box::new(Utc::now().format(TIMESTAMP_FORMAT)))
 }
 
@@ -241,7 +233,7 @@ fn create_config_file(matches: &ArgMatches) -> DatabaseResult<()> {
     Ok(())
 }
 
-fn run_database_command(matches: &ArgMatches) -> Result<(), Box<Error>> {
+fn run_database_command(matches: &ArgMatches) -> Result<(), Box<dyn Error>> {
     match matches.subcommand() {
         ("setup", Some(args)) => {
             let migrations_dir = migrations_dir(args);
@@ -282,7 +274,7 @@ fn create_migrations_directory(path: &Path) -> DatabaseResult<PathBuf> {
 }
 
 fn find_project_root() -> DatabaseResult<PathBuf> {
-    search_for_cargo_toml_directory(&try!(env::current_dir()))
+    search_for_cargo_toml_directory(&env::current_dir()?)
 }
 
 /// Searches for the directory that holds the project's Cargo.toml, and returns
@@ -305,10 +297,8 @@ where
     Conn: MigrationConnection + Any,
 {
     let migration_inner = || {
-        let reverted_version = try!(migrations::revert_latest_migration_in_directory(
-            conn,
-            migrations_dir
-        ));
+        let reverted_version =
+            migrations::revert_latest_migration_in_directory(conn, migrations_dir)?;
         migrations::run_migration_with_version(
             conn,
             migrations_dir,
@@ -325,16 +315,16 @@ where
 }
 
 #[cfg(feature = "mysql")]
-fn should_redo_migration_in_transaction(t: &Any) -> bool {
+fn should_redo_migration_in_transaction(t: &dyn Any) -> bool {
     !t.is::<::diesel::mysql::MysqlConnection>()
 }
 
 #[cfg(not(feature = "mysql"))]
-fn should_redo_migration_in_transaction(_t: &Any) -> bool {
+fn should_redo_migration_in_transaction(_t: &dyn Any) -> bool {
     true
 }
 
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
+#[allow(clippy::needless_pass_by_value)]
 fn handle_error<E: Display, T>(error: E) -> T {
     eprintln!("{}", error);
     ::std::process::exit(1);
@@ -356,7 +346,7 @@ fn convert_absolute_path_to_relative(target_path: &Path, mut current_path: &Path
     result.join(target_path.strip_prefix(current_path).unwrap())
 }
 
-fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<Error>> {
+fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<dyn Error>> {
     use infer_schema_internals::TableName;
     use print_schema::*;
 
@@ -376,7 +366,8 @@ fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<Error>> {
             } else {
                 table_name.parse().unwrap()
             }
-        }).collect();
+        })
+        .collect();
 
     if matches.is_present("whitelist") {
         eprintln!("The `whitelist` option has been deprecated and renamed to `only-tables`.");
@@ -409,7 +400,7 @@ fn run_infer_schema(matches: &ArgMatches) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), Box<Error>> {
+fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), Box<dyn Error>> {
     use std::io::Read;
 
     let config = Config::read(matches)?;
@@ -433,10 +424,11 @@ fn regenerate_schema_if_file_specified(matches: &ArgMatches) -> Result<(), Box<E
                     "Command would result in changes to {}. \
                      Rerun the command locally, and commit the changes.",
                     path.display()
-                ).into());
+                )
+                .into());
             }
         } else {
-            let mut file = fs::File::create(path)?;
+            let file = fs::File::create(path)?;
             print_schema::output_schema(&database_url, &config.print_schema, file, path)?;
         }
     }

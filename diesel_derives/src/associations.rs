@@ -53,7 +53,8 @@ fn derive_belongs_to(
         let lifetime = syn::Lifetime::new(&format!("'__{}", letter), span);
         generics.params.push(parse_quote!(#lifetime));
         lifetime
-    }).fold_type_path(parent_struct);
+    })
+    .fold_type_path(parent_struct);
 
     // TODO: Remove this special casing as soon as we bump our minimal supported
     // rust version to >= 1.30.0 because this version will add
@@ -114,17 +115,19 @@ impl AssociationOptions {
     fn from_meta(meta: MetaItem) -> Result<Self, Diagnostic> {
         let parent_struct = meta
             .nested()?
-            .find(|m| m.word().is_ok() || m.name() == "parent")
+            .find(|m| m.path().is_ok() || m.name().is_ident("parent"))
             .ok_or_else(|| meta.span())
             .and_then(|m| {
-                m.word()
+                m.path()
                     .map(|i| parse_quote!(#i))
                     .or_else(|_| m.ty_value())
                     .map_err(|_| m.span())
-            }).and_then(|ty| match ty {
+            })
+            .and_then(|ty| match ty {
                 syn::Type::Path(ty_path) => Ok(ty_path),
                 _ => Err(ty.span()),
-            }).map_err(|span| {
+            })
+            .map_err(|span| {
                 span.error("Expected a struct name")
                     .help("e.g. `#[belongs_to(User)]` or `#[belongs_to(parent = \"User<'_>\")]")
             })?;
@@ -133,18 +136,23 @@ impl AssociationOptions {
                 .path
                 .segments
                 .last()
-                .expect("paths always have at least one segment")
-                .into_value();
+                .expect("paths always have at least one segment");
             meta.nested_item("foreign_key")?
                 .map(|i| i.ident_value())
                 .unwrap_or_else(|| Ok(infer_foreign_key(&parent_struct_name.ident)))?
         };
 
-        let unrecognized_options = meta.nested()?.skip(1).filter(|n| n.name() != "foreign_key");
+        let unrecognized_options = meta
+            .nested()?
+            .skip(1)
+            .filter(|n| !n.name().is_ident("foreign_key"));
         for ignored in unrecognized_options {
             ignored
                 .span()
-                .warning(format!("Unrecognized option {}", ignored.name()))
+                .warning(format!(
+                    "Unrecognized option {}",
+                    path_to_string(&ignored.name())
+                ))
                 .emit();
         }
 

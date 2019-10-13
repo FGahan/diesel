@@ -14,7 +14,7 @@ use self::result::PgResult;
 use self::stmt::Statement;
 use connection::*;
 use deserialize::{Queryable, QueryableByName};
-use pg::{Pg, PgMetadataLookup, TransactionBuilder};
+use pg::{metadata_lookup::PgMetadataCache, Pg, PgMetadataLookup, TransactionBuilder};
 use query_builder::bind_collector::RawBytesBindCollector;
 use query_builder::*;
 use result::ConnectionError::CouldntSetupConfiguration;
@@ -26,18 +26,19 @@ use sql_types::HasSqlType;
 /// <https://www.postgresql.org/docs/9.4/static/libpq-connect.html#LIBPQ-CONNSTRING>
 #[allow(missing_debug_implementations)]
 pub struct PgConnection {
-    raw_connection: RawConnection,
+    pub(crate) raw_connection: RawConnection,
     transaction_manager: AnsiTransactionManager,
     statement_cache: StatementCache<Pg, Statement>,
+    metadata_cache: PgMetadataCache,
 }
 
 unsafe impl Send for PgConnection {}
 
 impl SimpleConnection for PgConnection {
     fn batch_execute(&self, query: &str) -> QueryResult<()> {
-        let query = try!(CString::new(query));
+        let query = CString::new(query)?;
         let inner_result = unsafe { self.raw_connection.exec(query.as_ptr()) };
-        try!(PgResult::new(inner_result?));
+        PgResult::new(inner_result?, self)?;
         Ok(())
     }
 }
@@ -52,6 +53,7 @@ impl Connection for PgConnection {
                 raw_connection: raw_conn,
                 transaction_manager: AnsiTransactionManager::new(),
                 statement_cache: StatementCache::new(),
+                metadata_cache: PgMetadataCache::new(),
             };
             conn.set_config_options()
                 .map_err(CouldntSetupConfiguration)?;
@@ -72,9 +74,9 @@ impl Connection for PgConnection {
         Pg: HasSqlType<T::SqlType>,
         U: Queryable<T::SqlType, Pg>,
     {
-        let (query, params) = try!(self.prepare_query(&source.as_query()));
+        let (query, params) = self.prepare_query(&source.as_query())?;
         query
-            .execute(&self.raw_connection, &params)
+            .execute(self, &params)
             .and_then(|r| Cursor::new(r).collect())
     }
 
@@ -86,7 +88,7 @@ impl Connection for PgConnection {
     {
         let (query, params) = self.prepare_query(source)?;
         query
-            .execute(&self.raw_connection, &params)
+            .execute(self, &params)
             .and_then(|r| NamedCursor::new(r).collect())
     }
 
@@ -95,10 +97,8 @@ impl Connection for PgConnection {
     where
         T: QueryFragment<Pg> + QueryId,
     {
-        let (query, params) = try!(self.prepare_query(source));
-        query
-            .execute(&self.raw_connection, &params)
-            .map(|r| r.rows_affected())
+        let (query, params) = self.prepare_query(source)?;
+        query.execute(self, &params).map(|r| r.rows_affected())
     }
 
     #[doc(hidden)]
@@ -136,13 +136,13 @@ impl PgConnection {
         TransactionBuilder::new(self)
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(type_complexity))]
+    #[allow(clippy::type_complexity)]
     fn prepare_query<T: QueryFragment<Pg> + QueryId>(
         &self,
         source: &T,
     ) -> QueryResult<(MaybeCached<Statement>, Vec<Option<Vec<u8>>>)> {
         let mut bind_collector = RawBytesBindCollector::<Pg>::new();
-        try!(source.collect_binds(&mut bind_collector, PgMetadataLookup::new(self)));
+        source.collect_binds(&mut bind_collector, PgMetadataLookup::new(self))?;
         let binds = bind_collector.binds;
         let metadata = bind_collector.metadata;
 
@@ -155,20 +155,15 @@ impl PgConnection {
                 } else {
                     None
                 };
-                Statement::prepare(
-                    &self.raw_connection,
-                    sql,
-                    query_name.as_ref().map(|s| &**s),
-                    &metadata,
-                )
+                Statement::prepare(self, sql, query_name.as_ref().map(|s| &**s), &metadata)
             });
 
         Ok((query?, binds))
     }
 
     fn execute_inner(&self, query: &str) -> QueryResult<PgResult> {
-        let query = try!(Statement::prepare(&self.raw_connection, query, None, &[]));
-        query.execute(&self.raw_connection, &Vec::new())
+        let query = Statement::prepare(self, query, None, &[])?;
+        query.execute(self, &Vec::new())
     }
 
     fn set_config_options(&self) -> QueryResult<()> {
@@ -177,6 +172,10 @@ impl PgConnection {
         self.raw_connection
             .set_notice_processor(noop_notice_processor);
         Ok(())
+    }
+
+    pub(crate) fn get_metadata_cache(&self) -> &PgMetadataCache {
+        &self.metadata_cache
     }
 }
 
@@ -230,11 +229,12 @@ mod tests {
         assert_eq!(2, connection.statement_cache.len());
     }
 
+    sql_function!(fn lower(x: VarChar) -> VarChar);
+
     #[test]
     fn queries_with_identical_types_and_binds_but_different_sql_are_cached_separately() {
         let connection = connection();
 
-        sql_function!(fn lower(x: VarChar) -> VarChar);
         let hi = "HI".into_sql::<VarChar>();
         let query = ::select(hi).into_boxed::<Pg>();
         let query2 = ::select(lower(hi)).into_boxed::<Pg>();

@@ -2,14 +2,18 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 use std::error::Error;
 use std::io::prelude::*;
 
-use backend::Backend;
+use backend::{Backend, BinaryRawValue};
 use deserialize::{self, FromSql};
 use serialize::{self, IsNull, Output, ToSql};
 use sql_types;
 
-impl<DB: Backend<RawValue = [u8]>> FromSql<sql_types::Float, DB> for f32 {
-    fn from_sql(bytes: Option<&[u8]>) -> deserialize::Result<Self> {
-        let mut bytes = not_none!(bytes);
+impl<DB> FromSql<sql_types::Float, DB> for f32
+where
+    DB: Backend + for<'a> BinaryRawValue<'a>,
+{
+    fn from_sql(value: Option<::backend::RawValue<DB>>) -> deserialize::Result<Self> {
+        let value = not_none!(value);
+        let mut bytes = DB::as_bytes(value);
         debug_assert!(
             bytes.len() <= 4,
             "Received more than 4 bytes while decoding \
@@ -17,7 +21,7 @@ impl<DB: Backend<RawValue = [u8]>> FromSql<sql_types::Float, DB> for f32 {
         );
         bytes
             .read_f32::<DB::ByteOrder>()
-            .map_err(|e| Box::new(e) as Box<Error + Send + Sync>)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
 }
 
@@ -25,13 +29,17 @@ impl<DB: Backend> ToSql<sql_types::Float, DB> for f32 {
     fn to_sql<W: Write>(&self, out: &mut Output<W, DB>) -> serialize::Result {
         out.write_f32::<DB::ByteOrder>(*self)
             .map(|_| IsNull::No)
-            .map_err(|e| Box::new(e) as Box<Error + Send + Sync>)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
 }
 
-impl<DB: Backend<RawValue = [u8]>> FromSql<sql_types::Double, DB> for f64 {
-    fn from_sql(bytes: Option<&[u8]>) -> deserialize::Result<Self> {
-        let mut bytes = not_none!(bytes);
+impl<DB> FromSql<sql_types::Double, DB> for f64
+where
+    DB: Backend + for<'a> BinaryRawValue<'a>,
+{
+    fn from_sql(value: Option<::backend::RawValue<DB>>) -> deserialize::Result<Self> {
+        let value = not_none!(value);
+        let mut bytes = DB::as_bytes(value);
         debug_assert!(
             bytes.len() <= 8,
             "Received more than 8 bytes while decoding \
@@ -39,7 +47,7 @@ impl<DB: Backend<RawValue = [u8]>> FromSql<sql_types::Double, DB> for f64 {
         );
         bytes
             .read_f64::<DB::ByteOrder>()
-            .map_err(|e| Box::new(e) as Box<Error + Send + Sync>)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
 }
 
@@ -47,6 +55,6 @@ impl<DB: Backend> ToSql<sql_types::Double, DB> for f64 {
     fn to_sql<W: Write>(&self, out: &mut Output<W, DB>) -> serialize::Result {
         out.write_f64::<DB::ByteOrder>(*self)
             .map(|_| IsNull::No)
-            .map_err(|e| Box::new(e) as Box<Error + Send + Sync>)
+            .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
     }
 }

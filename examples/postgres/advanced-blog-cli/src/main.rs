@@ -44,7 +44,7 @@ fn main() {
     handle_error(run_cli(&database_url, matches));
 }
 
-fn run_cli(database_url: &str, cli: Cli) -> Result<(), Box<Error>> {
+fn run_cli(database_url: &str, cli: Cli) -> Result<(), Box<dyn Error>> {
     let conn = PgConnection::establish(database_url)?;
 
     match cli {
@@ -89,7 +89,8 @@ fn run_cli(database_url: &str, cli: Cli) -> Result<(), Box<Error>> {
                     posts::user_id.eq(user.id),
                     posts::title.eq(title),
                     posts::body.eq(body),
-                )).returning(posts::id)
+                ))
+                .returning(posts::id)
                 .get_result::<i32>(&conn)?;
             println!("Successfully created post with id {}", id);
         }
@@ -123,7 +124,8 @@ fn run_cli(database_url: &str, cli: Cli) -> Result<(), Box<Error>> {
                     user_id.eq(current_user(&conn)?.id),
                     post_id.eq(given_post_id),
                     body.eq(editor::edit_string("")?),
-                )).returning(id)
+                ))
+                .returning(id)
                 .get_result::<i32>(&conn)?;
             println!("Created comment with ID {}", inserted);
         }
@@ -169,7 +171,7 @@ fn run_cli(database_url: &str, cli: Cli) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn current_user(conn: &PgConnection) -> Result<auth::User, Box<Error>> {
+fn current_user(conn: &PgConnection) -> Result<auth::User, Box<dyn Error>> {
     match auth::current_user_from_env(conn) {
         Ok(Some(user)) => Ok(user),
         Ok(None) => Err("No user found with the given username".into()),
@@ -177,7 +179,7 @@ fn current_user(conn: &PgConnection) -> Result<auth::User, Box<Error>> {
     }
 }
 
-fn register_user(conn: &PgConnection) -> Result<(), Box<Error>> {
+fn register_user(conn: &PgConnection) -> Result<(), Box<dyn Error>> {
     use auth::AuthenticationError as Auth;
     use diesel::result::DatabaseErrorKind::UniqueViolation;
     use diesel::result::Error::DatabaseError;
@@ -191,7 +193,7 @@ fn register_user(conn: &PgConnection) -> Result<(), Box<Error>> {
     }
 }
 
-fn convert_auth_error(err: auth::AuthenticationError) -> Box<Error> {
+fn convert_auth_error(err: auth::AuthenticationError) -> Box<dyn Error> {
     use auth::AuthenticationError::*;
 
     match err {
@@ -208,14 +210,14 @@ fn convert_auth_error(err: auth::AuthenticationError) -> Box<Error> {
     }
 }
 
-fn handle_error<T>(res: Result<T, Box<Error>>) -> T {
+fn handle_error<T>(res: Result<T, Box<dyn Error>>) -> T {
     match res {
         Ok(x) => x,
         Err(e) => print_error_and_exit(&*e),
     }
 }
 
-fn print_error_and_exit(err: &Error) -> ! {
+fn print_error_and_exit(err: &dyn Error) -> ! {
     use std::process::exit;
     eprintln!("An unexpected error occurred: {}", err);
     exit(1);

@@ -5,7 +5,7 @@ use std::os::raw as libc;
 use std::ptr;
 
 use super::result::PgResult;
-use pg::PgTypeMetadata;
+use pg::{PgConnection, PgTypeMetadata};
 use result::QueryResult;
 
 pub use super::raw::RawConnection;
@@ -16,25 +16,26 @@ pub struct Statement {
 }
 
 impl Statement {
-    #[cfg_attr(feature = "cargo-clippy", allow(ptr_arg))]
-    pub fn execute(
+    #[allow(clippy::ptr_arg)]
+    pub fn execute<'a>(
         &self,
-        conn: &RawConnection,
+        conn: &'a PgConnection,
         param_data: &Vec<Option<Vec<u8>>>,
-    ) -> QueryResult<PgResult> {
+    ) -> QueryResult<PgResult<'a>> {
         let params_pointer = param_data
             .iter()
             .map(|data| {
                 data.as_ref()
                     .map(|d| d.as_ptr() as *const libc::c_char)
                     .unwrap_or(ptr::null())
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
         let param_lengths = param_data
             .iter()
             .map(|data| data.as_ref().map(|d| d.len() as libc::c_int).unwrap_or(0))
             .collect::<Vec<_>>();
         let internal_res = unsafe {
-            conn.exec_prepared(
+            conn.raw_connection.exec_prepared(
                 self.name.as_ptr(),
                 params_pointer.len() as libc::c_int,
                 params_pointer.as_ptr(),
@@ -44,32 +45,32 @@ impl Statement {
             )
         };
 
-        PgResult::new(internal_res?)
+        PgResult::new(internal_res?, conn)
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(ptr_arg))]
+    #[allow(clippy::ptr_arg)]
     pub fn prepare(
-        conn: &RawConnection,
+        conn: &PgConnection,
         sql: &str,
         name: Option<&str>,
         param_types: &[PgTypeMetadata],
     ) -> QueryResult<Self> {
-        let name = try!(CString::new(name.unwrap_or("")));
-        let sql = try!(CString::new(sql));
+        let name = CString::new(name.unwrap_or(""))?;
+        let sql = CString::new(sql)?;
         let param_types_vec = param_types.iter().map(|x| x.oid).collect();
 
         let internal_result = unsafe {
-            conn.prepare(
+            conn.raw_connection.prepare(
                 name.as_ptr(),
                 sql.as_ptr(),
                 param_types.len() as libc::c_int,
                 param_types_to_ptr(Some(&param_types_vec)),
             )
         };
-        try!(PgResult::new(internal_result?));
+        PgResult::new(internal_result?, conn)?;
 
         Ok(Statement {
-            name: name,
+            name,
             param_formats: vec![1; param_types.len()],
         })
     }
